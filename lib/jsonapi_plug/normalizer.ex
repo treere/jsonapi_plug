@@ -122,19 +122,23 @@ defmodule JSONAPIPlug.Normalizer do
     Enum.reduce(resource.attributes(), params, fn attribute, params ->
       name = Resource.field_name(attribute)
       deserialize = Resource.field_option(attribute, :deserialize)
-      key = to_string(Resource.field_option(attribute, :name) || name)
+      key = Resource.field_option(attribute, :name) || name
+      value = Map.fetch(resource_object.attributes, recase_field(conn, name))
 
-      case Map.fetch(resource_object.attributes, recase_field(conn, name)) do
-        {:ok, _value} when deserialize == false ->
+      case {value, deserialize} do
+        {{:ok, _value}, deserialize} when deserialize == false ->
           params
 
-        {:ok, value} when is_function(deserialize, 2) ->
+        {{:ok, value}, deserialize} when is_function(deserialize, 2) ->
           normalizer.denormalize_attribute(params, key, deserialize.(value, conn))
 
-        {:ok, value} ->
+        {{:ok, value}, {m, f, 2}} ->
+          normalizer.denormalize_attribute(params, key, apply(m, f, [value, conn]))
+
+        {{:ok, value}, _} ->
           normalizer.denormalize_attribute(params, key, value)
 
-        :error ->
+        {:error, _} ->
           params
       end
     end)
@@ -280,7 +284,7 @@ defmodule JSONAPIPlug.Normalizer do
           |> requested_fields(resource, conn)
           |> Enum.reduce(%{}, fn attribute, attributes ->
             name = Resource.field_name(attribute)
-            key = Resource.field_option(attribute, :name) || Resource.field_name(attribute)
+            key = Resource.field_option(attribute, :name) || name
 
             case Resource.field_option(attribute, :serialize) do
               false ->
@@ -293,6 +297,11 @@ defmodule JSONAPIPlug.Normalizer do
 
               serialize when is_function(serialize, 2) ->
                 value = serialize.(data, conn)
+
+                Map.put(attributes, recase_field(conn, name), value)
+
+              {module, function, 2} ->
+                value = apply(module, function, [data, conn])
 
                 Map.put(attributes, recase_field(conn, name), value)
             end

@@ -137,7 +137,7 @@ defmodule JSONAPIPlug.TestSupport.Resources do
         age: nil,
         first_name: nil,
         last_name: nil,
-        full_name: [serialize: &full_name/2],
+        full_name: [serialize: {__MODULE__, :full_name, 2}],
         username: nil,
         password: nil
       ],
@@ -146,7 +146,7 @@ defmodule JSONAPIPlug.TestSupport.Resources do
         top_posts: [resource: MyPostResource, many: true]
       ]
 
-    defp full_name(%User{} = user, _conn),
+    def full_name(%User{} = user, _conn),
       do: Enum.join([user.first_name, user.last_name], " ")
   end
 end

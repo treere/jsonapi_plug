@@ -1,6 +1,7 @@
 import Config
 
 alias JSONAPIPlug.TestSupport.API.{
+  AtomicAPI,
   DasherizingAPI,
   DefaultAPI,
   OtherHostAPI,
@@ -10,6 +11,8 @@ alias JSONAPIPlug.TestSupport.API.{
 }
 
 alias JSONAPIPlug.TestSupport.Pagination.PageBasedPagination
+
+config :jsonapi_plug, AtomicAPI, extensions: ["https://jsonapi.org/ext/atomic"]
 
 config :jsonapi_plug, DasherizingAPI, case: :dasherize
 config :jsonapi_plug, DefaultAPI, pagination: PageBasedPagination

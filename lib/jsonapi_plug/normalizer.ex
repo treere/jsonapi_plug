@@ -33,6 +33,7 @@ defmodule JSONAPIPlug.Normalizer do
 
   alias JSONAPIPlug.{
     Document,
+    Document.AtomicOperation,
     Document.JSONAPIObject,
     Document.RelationshipObject,
     Document.ResourceIdentifierObject,
@@ -67,7 +68,12 @@ defmodule JSONAPIPlug.Normalizer do
               params() | no_return()
 
   @doc "Transforms a JSON:API Document user data"
-  @spec denormalize(Document.t(), Resource.t(), Conn.t()) :: Conn.params() | no_return()
+  @spec denormalize(Document.t(), Resource.t(), Conn.t()) ::
+          Conn.params() | [Conn.params()] | no_return()
+  def denormalize(%Document{operations: operations} = document, _resource, conn)
+      when is_list(operations),
+      do: Enum.map(operations, &denormalize_operation(document, &1, conn))
+
   def denormalize(%Document{data: nil}, _resource, _conn), do: %{}
 
   def denormalize(%Document{data: resource_objects} = document, resource, conn)
@@ -91,6 +97,132 @@ defmodule JSONAPIPlug.Normalizer do
     |> denormalize_id(resource_object, resource, conn)
     |> denormalize_attributes(resource_object, resource, conn)
     |> denormalize_relationships(resource_object, document, resource, conn)
+  end
+
+  defp denormalize_operation(
+         document,
+         %AtomicOperation{op: op, ref: ref, data: data} = _operation,
+         %Conn{private: %{jsonapi_plug: %JSONAPIPlug{} = jsonapi_plug}} = conn
+       ) do
+    type = resolve_operation_type(ref, data)
+    resource = resolve_resource_module(type, jsonapi_plug)
+    normalizer = jsonapi_plug.config[:normalizer]
+
+    params =
+      normalizer.resource_params()
+      |> denormalize_operation_id(op, ref, data, resource, conn)
+
+    params =
+      if op in ["add", "update"] and not is_nil(data) do
+        params
+        |> denormalize_attributes(data, resource, conn)
+        |> denormalize_relationships(data, document, resource, conn)
+      else
+        params
+      end
+
+    # Capture lid if present (always forwarded to application for cross-operation resolution)
+    params =
+      if op == "add" and not is_nil(data) and not is_nil(data.lid) do
+        Map.put(params, "lid", data.lid)
+      else
+        params
+      end
+
+    %{op: op, type: type, params: params}
+  end
+
+  defp resolve_operation_type(ref, data) do
+    cond do
+      not is_nil(ref) ->
+        ref.type
+
+      not is_nil(data) ->
+        data.type
+
+      true ->
+        raise InvalidDocument,
+          message: "Cannot determine type for operation",
+          reference: "https://jsonapi.org/ext/atomic/"
+    end
+  end
+
+  defp resolve_resource_module(type, %JSONAPIPlug{} = jsonapi_plug) do
+    case Map.get(jsonapi_plug.resource_types || %{}, type) do
+      nil ->
+        raise InvalidDocument,
+          message: "Unknown resource type '#{type}' in atomic operation",
+          reference: "https://jsonapi.org/ext/atomic/"
+
+      module ->
+        struct(module)
+    end
+  end
+
+  # For "remove" operations: get id from ref or data, no attributes
+  defp denormalize_operation_id(
+         params,
+         "remove",
+         ref,
+         data,
+         resource,
+         %Conn{private: %{jsonapi_plug: %JSONAPIPlug{} = jsonapi_plug}} = _conn
+       ) do
+    id = (ref && ref.id) || (data && data.id)
+
+    if is_nil(id) do
+      params
+    else
+      jsonapi_plug.config[:normalizer].denormalize_attribute(
+        params,
+        Resource.id_attribute(resource),
+        id
+      )
+    end
+  end
+
+  # For "update" operations: id required from ref or data
+  defp denormalize_operation_id(
+         params,
+         "update",
+         ref,
+         data,
+         resource,
+         %Conn{private: %{jsonapi_plug: %JSONAPIPlug{} = jsonapi_plug}} = _conn
+       ) do
+    id = (ref && ref.id) || (data && data.id)
+
+    if is_nil(id) do
+      params
+    else
+      jsonapi_plug.config[:normalizer].denormalize_attribute(
+        params,
+        Resource.id_attribute(resource),
+        id
+      )
+    end
+  end
+
+  # For "add" operations: include id only if client-generated IDs enabled
+  defp denormalize_operation_id(
+         params,
+         "add",
+         _ref,
+         data,
+         resource,
+         %Conn{private: %{jsonapi_plug: %JSONAPIPlug{} = jsonapi_plug}} = _conn
+       ) do
+    case {jsonapi_plug.config[:client_generated_ids], data && data.id} do
+      {true, id} when not is_nil(id) ->
+        jsonapi_plug.config[:normalizer].denormalize_attribute(
+          params,
+          Resource.id_attribute(resource),
+          id
+        )
+
+      _ ->
+        params
+    end
   end
 
   defp denormalize_id(

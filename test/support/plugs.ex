@@ -2,6 +2,7 @@ defmodule JSONAPIPlug.TestSupport.Plugs do
   @moduledoc false
 
   alias JSONAPIPlug.TestSupport.API.{
+    AtomicAPI,
     DasherizingAPI,
     DefaultAPI,
     OtherHostAPI,
@@ -12,6 +13,15 @@ defmodule JSONAPIPlug.TestSupport.Plugs do
   }
 
   alias JSONAPIPlug.TestSupport.Resources.{Car, Post, User}
+
+  defmodule AtomicOperationsPlug do
+    @moduledoc false
+
+    use Plug.Builder
+
+    plug Plug.Parsers, parsers: [:json], json_decoder: Jason
+    plug JSONAPIPlug.AtomicPlug, api: AtomicAPI, resources: [Post, User]
+  end
 
   defmodule CarResourcePlug do
     @moduledoc false

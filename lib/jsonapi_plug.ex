@@ -22,9 +22,11 @@ defmodule JSONAPIPlug do
           fields: term(),
           filter: term(),
           include: term(),
+          operations: [map()] | nil,
           page: term(),
           params: Conn.params(),
           resource: Resource.t(),
+          resource_types: %{String.t() => module()} | nil,
           sort: term()
         }
   defstruct allowed_includes: nil,
@@ -33,9 +35,11 @@ defmodule JSONAPIPlug do
             fields: nil,
             filter: nil,
             include: nil,
+            operations: nil,
             page: nil,
             params: nil,
             resource: nil,
+            resource_types: nil,
             sort: nil
 
   @doc """
@@ -68,6 +72,58 @@ defmodule JSONAPIPlug do
       ) do
     Normalizer.normalize(conn, resource_or_resources, meta, links, options)
     |> Document.serialize()
+  end
+
+  @doc """
+  Render JSON:API Atomic Operations response
+
+  Renders the `atomic:results` document for a batch of atomic operations.
+  Accepts a list of `{resource_or_nil, meta_or_nil}` result tuples, one per operation.
+
+  Returns `nil` when all results have a nil resource, signalling to the caller
+  that a `204 No Content` response with no body is appropriate.
+
+  ## Examples
+
+      # In a controller handling POST /operations
+      results = Enum.map(conn.private.jsonapi_plug.operations, fn op ->
+        case op.op do
+          "add" -> {%Post{id: "1", title: "Hello"}, nil}
+          "remove" -> {nil, nil}
+        end
+      end)
+
+      case render_atomic(conn, results) do
+        nil -> send_resp(conn, 204, "")
+        document -> json(conn, document)
+      end
+  """
+  @spec render_atomic(
+          Conn.t(),
+          [{Resource.t() | nil, Document.meta() | nil}],
+          Resource.options()
+        ) :: Document.t() | nil | no_return()
+  def render_atomic(conn, results, options \\ [])
+
+  def render_atomic(conn, results, options) when is_list(results) do
+    all_empty? =
+      Enum.all?(results, fn {resource, meta} -> is_nil(resource) and is_nil(meta) end)
+
+    if all_empty? do
+      nil
+    else
+      serialized_results = Enum.map(results, &serialize_atomic_result(conn, &1, options))
+      Document.serialize(%Document{results: serialized_results})
+    end
+  end
+
+  defp serialize_atomic_result(_conn, {nil, nil}, _options), do: %{}
+
+  defp serialize_atomic_result(_conn, {nil, meta}, _options), do: %{meta: meta}
+
+  defp serialize_atomic_result(conn, {resource, meta}, options) do
+    %Document{data: resource_object} = Normalizer.normalize(conn, resource, nil, nil, options)
+    if meta, do: %{data: resource_object, meta: meta}, else: %{data: resource_object}
   end
 
   @doc """

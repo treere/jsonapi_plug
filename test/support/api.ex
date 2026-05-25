@@ -1,6 +1,11 @@
 defmodule JSONAPIPlug.TestSupport.API do
   @moduledoc false
 
+  defmodule AtomicAPI do
+    @moduledoc false
+    use JSONAPIPlug.API, otp_app: :jsonapi_plug
+  end
+
   defmodule DasherizingAPI do
     @moduledoc false
     use JSONAPIPlug.API, otp_app: :jsonapi_plug

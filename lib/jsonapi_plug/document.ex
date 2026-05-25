@@ -9,6 +9,7 @@ defmodule JSONAPIPlug.Document do
   """
 
   alias JSONAPIPlug.{
+    Document.AtomicOperation,
     Document.ErrorObject,
     Document.JSONAPIObject,
     Document.LinkObject,
@@ -64,6 +65,20 @@ defmodule JSONAPIPlug.Document do
   @type links :: %{atom() => LinkObject.t()}
 
   @typedoc """
+  JSON:API Atomic Operations
+
+  https://jsonapi.org/ext/atomic/
+  """
+  @type operations :: [AtomicOperation.t()]
+
+  @typedoc """
+  JSON:API Atomic Results
+
+  https://jsonapi.org/ext/atomic/
+  """
+  @type results :: [%{optional(:data) => ResourceObject.t() | nil, optional(:meta) => meta()}]
+
+  @typedoc """
   JSON:API Document
 
   https://jsonapi.org/format/#document-structure
@@ -74,9 +89,11 @@ defmodule JSONAPIPlug.Document do
           included: included() | nil,
           jsonapi: jsonapi() | nil,
           links: links() | nil,
-          meta: meta() | nil
+          meta: meta() | nil,
+          operations: operations() | nil,
+          results: results() | nil
         }
-  defstruct [:data, :errors, :included, :jsonapi, :links, :meta]
+  defstruct [:data, :errors, :included, :jsonapi, :links, :meta, :operations, :results]
 
   @doc """
   Deserialize JSON:API Document
@@ -85,6 +102,27 @@ defmodule JSONAPIPlug.Document do
   and parses it into a `t:t/0` struct.
   """
   @spec deserialize(payload()) :: t() | no_return()
+  def deserialize(%{"atomic:operations" => _, "data" => _}) do
+    raise InvalidDocument,
+      message: "Document cannot contain both 'atomic:operations' and 'data' members",
+      reference: "https://jsonapi.org/ext/atomic/"
+  end
+
+  def deserialize(%{"atomic:operations" => _, "errors" => _}) do
+    raise InvalidDocument,
+      message: "Document cannot contain both 'atomic:operations' and 'errors' members",
+      reference: "https://jsonapi.org/ext/atomic/"
+  end
+
+  def deserialize(%{"atomic:operations" => operations} = data) do
+    %__MODULE__{
+      jsonapi: deserialize_jsonapi(data),
+      links: deserialize_links(data),
+      meta: deserialize_meta(data),
+      operations: deserialize_operations(operations)
+    }
+  end
+
   def deserialize(data) do
     %__MODULE__{
       data: deserialize_data(data),
@@ -94,6 +132,21 @@ defmodule JSONAPIPlug.Document do
       links: deserialize_links(data),
       meta: deserialize_meta(data)
     }
+  end
+
+  defp deserialize_operations([]) do
+    raise InvalidDocument,
+      message: "'atomic:operations' array must not be empty",
+      reference: "https://jsonapi.org/ext/atomic/"
+  end
+
+  defp deserialize_operations(operations) when is_list(operations),
+    do: Enum.map(operations, &AtomicOperation.deserialize/1)
+
+  defp deserialize_operations(_operations) do
+    raise InvalidDocument,
+      message: "'atomic:operations' must be an array",
+      reference: "https://jsonapi.org/ext/atomic/"
   end
 
   defp deserialize_data(%{"data" => _data, "errors" => _errors}) do
@@ -165,6 +218,10 @@ defmodule JSONAPIPlug.Document do
   it and returns the struct if valid.
   """
   @spec serialize(t()) :: t() | no_return()
+  def serialize(%__MODULE__{results: results} = document) when not is_nil(results) do
+    %{document | results: serialize_results(results)}
+  end
+
   def serialize(%__MODULE__{} = document) do
     %{
       document
@@ -183,6 +240,15 @@ defmodule JSONAPIPlug.Document do
     do: Enum.map(resources, &ResourceObject.serialize/1)
 
   defp serialize_data(nil), do: nil
+
+  defp serialize_results(results) when is_list(results),
+    do: Enum.map(results, &serialize_result/1)
+
+  defp serialize_result(%{data: %ResourceObject{} = resource_object} = result) do
+    %{result | data: ResourceObject.serialize(resource_object)}
+  end
+
+  defp serialize_result(result), do: result
 
   defp serialize_errors(errors)
        when not is_nil(errors) and not is_list(errors) do
@@ -228,7 +294,6 @@ end
 
 defimpl Jason.Encoder,
   for: [
-    JSONAPIPlug.Document,
     JSONAPIPlug.Document.ErrorObject,
     JSONAPIPlug.Document.JSONAPIObject,
     JSONAPIPlug.Document.LinkObject,
@@ -240,6 +305,54 @@ defimpl Jason.Encoder,
     document
     |> Map.from_struct()
     |> Enum.reduce(%{}, fn
+      {_key, nil}, data -> data
+      {_key, %{} = map}, data when map_size(map) == 0 -> data
+      {key, value}, data -> Map.put(data, key, value)
+    end)
+    |> Jason.Encode.map(options)
+  end
+end
+
+defimpl Jason.Encoder, for: JSONAPIPlug.Document do
+  def encode(%JSONAPIPlug.Document{results: results} = document, options)
+      when not is_nil(results) do
+    # atomic:results response document — emit "atomic:results" with string key
+    document
+    |> Map.from_struct()
+    |> Enum.reduce(%{}, fn
+      {:results, results}, data when not is_nil(results) ->
+        Map.put(data, "atomic:results", results)
+
+      {:data, _}, data ->
+        data
+
+      {:included, _}, data ->
+        data
+
+      {:operations, _}, data ->
+        data
+
+      {:errors, _}, data ->
+        data
+
+      {_key, nil}, data ->
+        data
+
+      {_key, %{} = map}, data when map_size(map) == 0 ->
+        data
+
+      {key, value}, data ->
+        Map.put(data, key, value)
+    end)
+    |> Jason.Encode.map(options)
+  end
+
+  def encode(document, options) do
+    document
+    |> Map.from_struct()
+    |> Enum.reduce(%{}, fn
+      {:operations, _}, data -> data
+      {:results, _}, data -> data
       {_key, nil}, data -> data
       {_key, %{} = map}, data when map_size(map) == 0 -> data
       {key, value}, data -> Map.put(data, key, value)

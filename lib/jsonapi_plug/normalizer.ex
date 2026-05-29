@@ -153,25 +153,88 @@ defmodule JSONAPIPlug.Normalizer do
          attribute,
          %Conn{private: %{jsonapi_plug: %JSONAPIPlug{} = jsonapi_plug}} = conn
        ) do
-    case Resource.field_option(resource, attribute, :deserialize) do
-      false ->
+    case {Resource.field_option(resource, attribute, :type),
+          Resource.field_option(resource, attribute, :deserialize)} do
+      {:composed, _deserialize} ->
+        denormalize_composed_attribute(
+          params,
+          resource_object,
+          resource,
+          attribute,
+          conn,
+          jsonapi_plug
+        )
+
+      {_type, false} ->
         params
 
-      _deserialize ->
-        case Map.fetch(
-               resource_object.attributes,
-               Resource.recase_field(resource, attribute, jsonapi_plug.config[:case])
-             ) do
-          {:ok, value} ->
-            jsonapi_plug.config[:normalizer].denormalize_attribute(
-              params,
-              Resource.field_option(resource, attribute, :name) || attribute,
-              Attribute.deserialize(resource, attribute, value, conn)
-            )
+      {_type, _deserialize} ->
+        denormalize_simple_attribute(
+          params,
+          resource_object,
+          resource,
+          attribute,
+          conn,
+          jsonapi_plug
+        )
+    end
+  end
 
-          :error ->
-            params
-        end
+  defp denormalize_composed_attribute(
+         params,
+         resource_object,
+         resource,
+         attribute,
+         conn,
+         jsonapi_plug
+       ) do
+    composed_of = Resource.field_option(resource, attribute, :composed_of) || []
+    derived_fields_map = collect_derived_fields(composed_of, resource_object, jsonapi_plug)
+
+    if map_size(derived_fields_map) > 0 do
+      value = Attribute.deserialize(resource, attribute, derived_fields_map, conn)
+      key = Resource.field_option(resource, attribute, :name) || attribute
+      Map.put(params, to_string(key), value)
+    else
+      params
+    end
+  end
+
+  defp collect_derived_fields(composed_of, resource_object, jsonapi_plug) do
+    Enum.reduce(composed_of, %{}, fn derived_field, acc ->
+      recased_key =
+        derived_field
+        |> to_string()
+        |> JSONAPIPlug.recase(jsonapi_plug.config[:case])
+
+      case Map.fetch(resource_object.attributes, recased_key) do
+        {:ok, value} -> Map.put(acc, derived_field, value)
+        :error -> acc
+      end
+    end)
+  end
+
+  defp denormalize_simple_attribute(
+         params,
+         resource_object,
+         resource,
+         attribute,
+         conn,
+         jsonapi_plug
+       ) do
+    case Map.fetch(
+           resource_object.attributes,
+           Resource.recase_field(resource, attribute, jsonapi_plug.config[:case])
+         ) do
+      {:ok, value} ->
+        jsonapi_plug.config[:normalizer].denormalize_attribute(
+          params,
+          Resource.field_option(resource, attribute, :name) || attribute,
+          Attribute.deserialize(resource, attribute, value, conn)
+        )
+
+      :error ->
+        params
     end
   end
 
@@ -339,20 +402,54 @@ defmodule JSONAPIPlug.Normalizer do
     Resource.attributes(resource)
     |> requested_fields(resource, conn)
     |> Enum.reduce(%{}, fn attribute, attributes ->
-      case Resource.field_option(resource, attribute, :serialize) do
-        false ->
-          attributes
-
-        _serialize ->
-          key = Resource.field_option(resource, attribute, :name) || attribute
-
-          Map.put(
-            attributes,
-            Resource.recase_field(resource, attribute, jsonapi_plug.config[:case]),
-            Attribute.serialize(resource, attribute, Map.get(resource, key), conn)
-          )
-      end
+      normalize_attribute(attributes, resource, attribute, conn, jsonapi_plug)
     end)
+  end
+
+  defp normalize_attribute(attributes, resource, attribute, conn, jsonapi_plug) do
+    case {Resource.field_option(resource, attribute, :type),
+          Resource.field_option(resource, attribute, :serialize)} do
+      {:composed, _serialize} ->
+        normalize_composed_attribute(attributes, resource, attribute, conn, jsonapi_plug)
+
+      {_type, false} ->
+        attributes
+
+      {_type, _serialize} ->
+        normalize_simple_attribute(attributes, resource, attribute, conn, jsonapi_plug)
+    end
+  end
+
+  defp normalize_composed_attribute(attributes, resource, attribute, conn, jsonapi_plug) do
+    key = Resource.field_option(resource, attribute, :name) || attribute
+    value = Map.get(resource, key)
+
+    case Attribute.serialize(resource, attribute, value, conn) do
+      values_map when is_map(values_map) ->
+        Enum.reduce(values_map, attributes, fn {derived_field, derived_value}, acc ->
+          recased_key =
+            derived_field
+            |> to_string()
+            |> JSONAPIPlug.recase(jsonapi_plug.config[:case])
+
+          Map.put(acc, recased_key, derived_value)
+        end)
+
+      other ->
+        raise "#{inspect(Resource.type(resource))}: Attribute.serialize/4 for composed " <>
+                "attribute #{inspect(attribute)} must return a map of derived fields, " <>
+                "got: #{inspect(other)}"
+    end
+  end
+
+  defp normalize_simple_attribute(attributes, resource, attribute, conn, jsonapi_plug) do
+    key = Resource.field_option(resource, attribute, :name) || attribute
+
+    Map.put(
+      attributes,
+      Resource.recase_field(resource, attribute, jsonapi_plug.config[:case]),
+      Attribute.serialize(resource, attribute, Map.get(resource, key), conn)
+    )
   end
 
   defp normalize_relationships(

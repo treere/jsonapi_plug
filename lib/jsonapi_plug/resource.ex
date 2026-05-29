@@ -213,6 +213,31 @@ defimpl JSONAPIPlug.Resource, for: Any do
         raise "Illegal relationship name '#{field_name}' for resource '#{options[:type]}'. See https://jsonapi.org/format/#document-resource-object-fields for more information."
       end
     end
+
+    for {field_name, field_options} <- options[:attributes] || [],
+        is_list(field_options) do
+      check_composed_attribute(field_name, field_options, options[:type])
+    end
+  end
+
+  defp check_composed_attribute(field_name, field_options, resource_type) do
+    case Keyword.get(field_options, :type) do
+      :composed ->
+        unless is_list(Keyword.get(field_options, :composed_of)) do
+          raise "Composed attribute '#{field_name}' on resource '#{resource_type}' requires `composed_of: [...]` option."
+        end
+
+        if Keyword.get(field_options, :serialize) == false do
+          raise "Composed attribute '#{field_name}' on resource '#{resource_type}' cannot use `serialize: false`. Implement `defimpl JSONAPIPlug.Resource.Attribute` to control serialization."
+        end
+
+        if Keyword.get(field_options, :deserialize) == false do
+          raise "Composed attribute '#{field_name}' on resource '#{resource_type}' cannot use `deserialize: false`. Implement `defimpl JSONAPIPlug.Resource.Attribute` to control deserialization."
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   defp generate_field_option(options) do

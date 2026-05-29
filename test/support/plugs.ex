@@ -11,7 +11,20 @@ defmodule JSONAPIPlug.TestSupport.Plugs do
     UnderscoringAPI
   }
 
-  alias JSONAPIPlug.TestSupport.Resources.{Car, Post, User}
+  alias JSONAPIPlug.TestSupport.Resources.{Car, ComposedNameUser, Post, User}
+
+  defmodule ComposedNameUserPlug do
+    @moduledoc false
+
+    use Plug.Builder
+
+    plug Plug.Parsers, parsers: [:json], json_decoder: Jason
+
+    plug JSONAPIPlug.Plug,
+      api: DefaultAPI,
+      path: "composed-name-users",
+      resource: ComposedNameUser
+  end
 
   defmodule CarResourcePlug do
     @moduledoc false

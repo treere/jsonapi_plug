@@ -138,3 +138,84 @@ defimpl JSONAPIPlug.Resource.Attribute, for: JSONAPIPlug.TestSupport.Resources.U
   def serialize(_resource, _field_name, value, _conn), do: value
   def deserialize(_resource, _field_name, value, _conn), do: value
 end
+
+defmodule JSONAPIPlug.TestSupport.Resources.ComposedNameUser do
+  @moduledoc false
+
+  @derive {
+    JSONAPIPlug.Resource,
+    type: "composed-name-user",
+    attributes: [
+      username: [],
+      full_name: [
+        type: :composed,
+        composed_of: [:nome, :cognome]
+      ]
+    ]
+  }
+
+  defstruct id: nil, username: nil, full_name: nil
+end
+
+defimpl JSONAPIPlug.Resource.Attribute,
+  for: JSONAPIPlug.TestSupport.Resources.ComposedNameUser do
+  def serialize(_resource, :full_name, nil, _conn),
+    do: %{nome: nil, cognome: nil}
+
+  def serialize(_resource, :full_name, full_name, _conn) do
+    case String.split(full_name, "/", parts: 2) do
+      [nome, cognome] -> %{nome: nome, cognome: cognome}
+      [nome] -> %{nome: nome, cognome: nil}
+    end
+  end
+
+  def serialize(_resource, _attribute, value, _conn), do: value
+
+  def deserialize(_resource, :full_name, derived_fields, _conn) do
+    nome = Map.get(derived_fields, :nome)
+    cognome = Map.get(derived_fields, :cognome)
+    "#{nome}/#{cognome}"
+  end
+
+  def deserialize(_resource, _attribute, value, _conn), do: value
+end
+
+defmodule JSONAPIPlug.TestSupport.Resources.ComposedCamelUser do
+  @moduledoc false
+
+  @derive {
+    JSONAPIPlug.Resource,
+    type: "composed-camel-user",
+    attributes: [
+      full_name: [
+        type: :composed,
+        composed_of: [:first_name, :last_name]
+      ]
+    ]
+  }
+
+  defstruct id: nil, full_name: nil
+end
+
+defimpl JSONAPIPlug.Resource.Attribute,
+  for: JSONAPIPlug.TestSupport.Resources.ComposedCamelUser do
+  def serialize(_resource, :full_name, nil, _conn),
+    do: %{first_name: nil, last_name: nil}
+
+  def serialize(_resource, :full_name, full_name, _conn) do
+    case String.split(full_name, " ", parts: 2) do
+      [first, last] -> %{first_name: first, last_name: last}
+      [first] -> %{first_name: first, last_name: nil}
+    end
+  end
+
+  def serialize(_resource, _attribute, value, _conn), do: value
+
+  def deserialize(_resource, :full_name, derived_fields, _conn) do
+    first = Map.get(derived_fields, :first_name)
+    last = Map.get(derived_fields, :last_name)
+    "#{first} #{last}"
+  end
+
+  def deserialize(_resource, _attribute, value, _conn), do: value
+end

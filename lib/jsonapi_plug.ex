@@ -200,6 +200,19 @@ defmodule JSONAPIPlug do
       doc: "Controls wether the attribute is deserialized in requests.",
       type: :boolean,
       default: true
+    ],
+    composed_of: [
+      doc:
+        "List of derived field names for a composed attribute. " <>
+          "Required when `type: :composed`. The transformation logic must be implemented via " <>
+          "`defimpl JSONAPIPlug.Resource.Attribute`: `serialize/4` SHALL return a map " <>
+          "`%{derived_field => value}` and `deserialize/4` SHALL return the value of the " <>
+          "real field directly.",
+      type: {:list, :atom}
+    ],
+    type: [
+      doc: "Attribute type. Use `:composed` for attributes composed of multiple derived fields.",
+      type: {:in, [:composed]}
     ]
   ]
 
